@@ -1,76 +1,239 @@
-const snapshot = await page.evaluate(() => {
-  const clone =
-    document.documentElement.cloneNode(true);
+import puppeteer from 'puppeteer-core';
+import fs from 'node:fs/promises';
+import path from 'node:path';
+import crypto from 'node:crypto';
 
-  clone.querySelectorAll(
-    [
-      'script',
-      'style',
-      'noscript',
-      'iframe',
-      'object',
-      'embed',
-      'link',
-      'base',
-      'meta[http-equiv="refresh"]',
-      'input[type="password"]',
-      'input[type="hidden"]',
-      '[hidden]',
-      '[aria-hidden="true"]'
-    ].join(',')
-  ).forEach(el => el.remove());
+const CDP_URL =
+  process.env.CDP_URL ??
+  'http://127.0.0.1:9222';
 
-  const networkAttrs = new Set([
-    'src',
-    'srcset',
-    'poster',
-    'href',
-    'action',
-    'formaction'
-  ]);
+const TARGET_ORIGIN =
+  process.env.TARGET_ORIGIN;
 
-  for (const el of [clone, ...clone.querySelectorAll('*')]) {
-    for (const attr of [...el.attributes]) {
-      const name = attr.name.toLowerCase();
+const READY_SELECTOR =
+  process.env.READY_SELECTOR ??
+  'body';
 
-      // Remove network-capable attributes entirely.
-      // Do not preserve potentially sensitive URLs.
-      if (networkAttrs.has(name)) {
-        el.removeAttribute(attr.name);
-        continue;
-      }
+const CACHE_DIR =
+  process.env.CACHE_DIR ??
+  'C:\\agent-web-cache\\semsplus';
 
-      if (
-        name.startsWith('on') ||
-        name === 'srcdoc' ||
-        name === 'style' ||
-        /(^|[-_:])(token|secret|password|passwd|auth|session|csrf)([-_:]|$)/i
-          .test(name)
-      ) {
-        el.removeAttribute(attr.name);
-      }
+if (!TARGET_ORIGIN) {
+  throw new Error(
+    'TARGET_ORIGIN is required, e.g. https://example.com'
+  );
+}
+
+const browser = await puppeteer.connect({
+  browserURL: CDP_URL
+});
+
+try {
+  const pages = await browser.pages();
+
+  const page = pages.find((p) => {
+    try {
+      return new URL(p.url()).origin === TARGET_ORIGIN;
+    } catch {
+      return false;
     }
+  });
+
+  if (!page) {
+    throw new Error(
+      `No open page found for origin: ${TARGET_ORIGIN}`
+    );
   }
 
-  // Human/LLM-friendly text from the currently rendered page.
-  const text =
-    (document.body?.innerText ?? '')
-      .replace(/\u00a0/g, ' ')
-      .split(/\r?\n/)
-      .map(line =>
-        line
-          .replace(/[ \t]+/g, ' ')
-          .trim()
-      )
-      .filter(Boolean)
-      .join('\n');
+  console.log(`Using page: ${await page.title()}`);
+  console.log(`URL: ${page.url()}`);
 
-  return {
-    title: document.title,
-    url: location.href,
-    html:
-      '<!doctype html>\n' +
-      clone.outerHTML,
-    text
+  await page.waitForSelector(
+    READY_SELECTOR,
+    {
+      visible: true,
+      timeout: 60_000
+    }
+  );
+
+  // Temporary settling delay for the SPA.
+  // Later we will replace this with a SEMS+-specific readiness check.
+  await new Promise(
+    resolve => setTimeout(resolve, 1500)
+  );
+
+  const snapshot = await page.evaluate(() => {
+    const clone =
+      document.documentElement.cloneNode(true);
+
+    // Remove executable, embedded, hidden,
+    // and irrelevant content.
+    clone.querySelectorAll(
+      [
+        'script',
+        'style',
+        'noscript',
+        'iframe',
+        'object',
+        'embed',
+        'link',
+        'base',
+        'meta[http-equiv="refresh"]',
+        'input[type="password"]',
+        'input[type="hidden"]',
+        '[hidden]',
+        '[aria-hidden="true"]'
+      ].join(',')
+    ).forEach(el => el.remove());
+
+    const networkAttrs = new Set([
+      'src',
+      'srcset',
+      'poster',
+      'href',
+      'action',
+      'formaction'
+    ]);
+
+    // Include the root <html> element as well
+    // as all descendants.
+    for (
+      const el of
+      [clone, ...clone.querySelectorAll('*')]
+    ) {
+      for (const attr of [...el.attributes]) {
+        const name =
+          attr.name.toLowerCase();
+
+        // Remove network-capable attributes entirely.
+        // Do not preserve potentially sensitive URLs.
+        if (networkAttrs.has(name)) {
+          el.removeAttribute(attr.name);
+          continue;
+        }
+
+        // Remove event handlers and suspicious attributes.
+        if (
+          name.startsWith('on') ||
+          name === 'srcdoc' ||
+          name === 'style' ||
+          /(^|[-_:])(token|secret|password|passwd|auth|session|csrf)([-_:]|$)/i
+            .test(name)
+        ) {
+          el.removeAttribute(attr.name);
+        }
+      }
+    }
+
+    // Human/LLM-friendly visible text from
+    // the currently rendered page.
+    const text =
+      (document.body?.innerText ?? '')
+        .replace(/\u00a0/g, ' ')
+        .split(/\r?\n/)
+        .map(line =>
+          line
+            .replace(/[ \t]+/g, ' ')
+            .trim()
+        )
+        .filter(Boolean)
+        .join('\n');
+
+    return {
+      title: document.title,
+      url: location.href,
+
+      html:
+        '<!doctype html>\n' +
+        clone.outerHTML,
+
+      text
+    };
+  });
+
+  const capturedAt =
+    new Date().toISOString();
+
+  const stamp =
+    capturedAt.replace(/[:.]/g, '-');
+
+  const snapshotDir =
+    path.join(
+      CACHE_DIR,
+      'snapshots',
+      stamp
+    );
+
+  await fs.mkdir(
+    snapshotDir,
+    { recursive: true }
+  );
+
+  const sha256 = value =>
+    crypto
+      .createHash('sha256')
+      .update(value)
+      .digest('hex');
+
+  const metadata = {
+    capturedAt,
+    title: snapshot.title,
+    url: snapshot.url,
+    readySelector: READY_SELECTOR,
+
+    sha256: {
+      html: sha256(snapshot.html),
+      text: sha256(snapshot.text)
+    }
   };
-});
+
+  await Promise.all([
+    fs.writeFile(
+      path.join(
+        snapshotDir,
+        'page.html'
+      ),
+      snapshot.html,
+      'utf8'
+    ),
+
+    fs.writeFile(
+      path.join(
+        snapshotDir,
+        'page.txt'
+      ),
+      snapshot.text,
+      'utf8'
+    ),
+
+    fs.writeFile(
+      path.join(
+        snapshotDir,
+        'metadata.json'
+      ),
+      JSON.stringify(
+        metadata,
+        null,
+        2
+      ),
+      'utf8'
+    )
+  ]);
+
+  console.log('');
+  console.log(
+    `Snapshot: ${snapshotDir}`
+  );
+
+  console.log(
+    `Text length: ${snapshot.text.length}`
+  );
+
+  console.log(
+    `HTML length: ${snapshot.html.length}`
+  );
+
+} finally {
+  // Leave authenticated Edge running.
+  await browser.disconnect();
+}
