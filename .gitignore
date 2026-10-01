@@ -4,4 +4,9 @@ node_modules/
 *.log
 puppeteer-edge-profile/
 agent-web-cache/
+tesla-powerhub/
+**/tesla-powerhub/
+powerhub/snapshots/
+powerhub/replay/
+powerhub/latest.json
 Thumbs.db

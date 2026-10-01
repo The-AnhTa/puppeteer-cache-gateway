@@ -4,7 +4,11 @@
   "description": "Local development with Codex on laptop. Execution and authenticated browser access on CERGUARDAI.",
   "main": "index.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "test": "npm run powerhub:test",
+    "powerhub:capture": "node ./powerhub/capture.mjs",
+    "powerhub:build": "node ./powerhub/build-replay.mjs",
+    "powerhub:validate": "node ./powerhub/validate-replay.mjs",
+    "powerhub:test": "node --test ./powerhub/*.test.mjs"
   },
   "repository": {
     "type": "git",
