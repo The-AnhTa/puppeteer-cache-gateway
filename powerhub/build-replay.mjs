@@ -40,6 +40,51 @@ function escapeHtml(value) {
     .replaceAll("'", '&#039;');
 }
 
+/*
+ * Captured text is evidence and remains unchanged in snapshots/. The
+ * browser-served replay gets a separate, defensively neutralized copy.
+ * This removes complete network URLs first, then catches standalone
+ * forbidden hosts and any leftover network scheme marker.
+ */
+function neutralizeReplayText(value) {
+  return String(value)
+    .replace(
+      /\b[a-z][a-z0-9+.-]*:\/\/[^\s<>"'`]+/gi,
+      '[remote URL removed]'
+    )
+    .replace(
+      /(^|[\s("'=])\/\/(?:[a-z0-9-]+\.)+[a-z]{2,}(?:[/:?#][^\s<>"'`]*)?/gi,
+      '$1[remote URL removed]'
+    )
+    .replace(
+      /\b(?:[a-z0-9-]+\.)*(?:tesla\.com|mapbox\.com|forms\.office\.com)\b/gi,
+      '[remote host removed]'
+    )
+    .replace(
+      /\b(?:https?|wss?):\/\//gi,
+      '[remote scheme removed]'
+    );
+}
+
+/*
+ * page.html is displayed as escaped, inert source. Strip every captured
+ * opening-tag attribute before escaping it so href, src, action, poster,
+ * data-src, srcset, canonical/meta URLs, xmlns URLs, inline style url(),
+ * and any future URL-bearing attribute cannot enter the replay. Closing
+ * tags and text remain, preserving a useful DOM hierarchy.
+ */
+function neutralizeCapturedMarkup(value) {
+  const withoutAttributes =
+    String(value).replace(
+      /<([A-Za-z][A-Za-z0-9:_-]*)(?:\s+(?:[^>"']|"[^"]*"|'[^']*')*)?\s*\/?>/g,
+      '<$1>'
+    );
+
+  return neutralizeReplayText(
+    withoutAttributes
+  );
+}
+
 function assertDirectChild(
   parent,
   child
@@ -150,11 +195,11 @@ function renderRoutePage(
       </section>
       <section aria-labelledby="text-heading">
         <h2 id="text-heading">Visible text</h2>
-        <pre class="captured-text">${escapeHtml(capture.text)}</pre>
+        <pre class="captured-text">${escapeHtml(neutralizeReplayText(capture.text))}</pre>
       </section>
       <details>
         <summary>Sanitized DOM representation</summary>
-        <pre class="captured-dom">${escapeHtml(capture.html)}</pre>
+        <pre class="captured-dom">${escapeHtml(neutralizeCapturedMarkup(capture.html))}</pre>
       </details>
     `
   });

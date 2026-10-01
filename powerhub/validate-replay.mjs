@@ -13,6 +13,8 @@ const FORBIDDEN_TEXT = Object.freeze([
   'tesla.com',
   'mapbox.com',
   'forms.office.com',
+  'http://',
+  'https://',
   'ws://',
   'wss://',
   'authorization',

@@ -77,12 +77,33 @@ async function makeFixture() {
     await Promise.all([
       fs.writeFile(
         path.join(routeDir, 'page.html'),
-        `<!doctype html><html><body><main>${route.label} fixture</main></body></html>`,
+        `<!doctype html>
+          <html>
+            <head>
+              <meta property="og:url" content="${route.url}">
+              <link rel="canonical" href="${route.url}">
+            </head>
+            <body
+              data-src="https://cdn.example.invalid/background.png"
+              style="background-image: url(https://cdn.example.invalid/background.png)"
+            >
+              <svg xmlns="http://www.w3.org/2000/svg"></svg>
+              <form action="${route.url}">
+                <a href="${route.url}">${route.label} fixture</a>
+                <img
+                  src="https://cdn.example.invalid/image.png"
+                  srcset="https://cdn.example.invalid/image-2x.png 2x"
+                  poster="https://cdn.example.invalid/poster.png"
+                >
+              </form>
+              <p>Sign in with your tesla.com email.</p>
+            </body>
+          </html>`,
         'utf8'
       ),
       fs.writeFile(
         path.join(routeDir, 'page.txt'),
-        `${route.label}\nCaptured local state`,
+        `${route.label}\nCaptured local state\n${route.url}\ntesla.com`,
         'utf8'
       ),
       fs.writeFile(
@@ -195,6 +216,14 @@ test(
     assert.match(
       mapPage,
       /connect-src 'none'/
+    );
+    assert.doesNotMatch(
+      mapPage,
+      /(?:tesla\.com|mapbox\.com|forms\.office\.com|https?:\/\/|wss?:\/\/)/i
+    );
+    assert.doesNotMatch(
+      mapPage,
+      /(?:href|src|action|poster|data-src|srcset|style)=&quot;/i
     );
   }
 );
